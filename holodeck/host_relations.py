@@ -59,6 +59,7 @@ References
 * [Guo2010]_ Guo, White, Li & Boylan-Kolchin 2010.
 * [KH2013]_ Kormendy & Ho 2013.
 * [MM2013]_ McConnell & Ma 2013.
+* [DN2019]_ deNicola et. al 2019.
 
 """
 
@@ -925,16 +926,28 @@ class _MSigma_Relation(_BH_Host_Relation):
 
     _PROPERTIES = ['vdisp']
 
-    # @abc.abstractmethod
-    # def dmbh_dsigma(self, sigma):
-    #     pass
+    @abc.abstractmethod
+    def dsigma_dmbh(self, vdisp, redz):
+        pass
 
     @abc.abstractmethod
     def mbh_from_vdisp(self, vdisp, scatter):
         pass
 
     @abc.abstractmethod
-    def vdisp_from_mbh(self, mbh, scatter):
+    def vdisp_from_mbh(self, mbh, redz, scatter):
+        pass
+        
+    @abc.abstractmethod
+    def mstar_from_vdisp(self, vdisp, redz, scatter):
+        pass
+
+    @abc.abstractmethod
+    def vdisp_from_mstar(self, mstar, redz, scatter):
+        pass
+
+    @abc.abstractmethod
+    def mstar_from_mbh(self, mbh, redz, scatter):
         pass
 
 
@@ -949,24 +962,28 @@ class MSigma_Standard(_MSigma_Relation):
     """
 
     MASS_AMP = 1.0e8 * MSOL
-    SIGMA_PLAW = 4.24
+    MASS_PLAW = 4.24
     SIGMA_REF = 200.0 * KMPERSEC
     SCATTER_DEX = 0.0
+    MSTAR_PLAW = 0.293
 
-    def __init__(self, mamp=None, sigma_plaw=None, sigma_ref=None, scatter_dex=None):
+    def __init__(self, mamp=None, sigma_plaw=None, sigma_ref=None, scatter_dex=None, mstar_plaw=None):
         if mamp is None:
             mamp = self.MASS_AMP
         if sigma_plaw is None:
-            sigma_plaw = self.MASS_PLAW
+            mplaw = self.MASS_PLAW
         if sigma_ref is None:
             sigma_ref = self.SIGMA_REF
         if scatter_dex is None:
             scatter_dex = self.SCATTER_DEX
+        if mstar_plaw is None:
+            mstar_plaw = self.MSTAR_PLAW
 
         self._mamp = mamp   # Mass-Amplitude [grams]
-        self._sigma_plaw = sigma_plaw   # Mass Power-law index
+        self._mplaw = mplaw   # Mass Power-law index
         self._sigma_ref = sigma_ref   # Reference Sigma (argument normalization)
         self._scatter_dex = scatter_dex
+        self._mstar_plaw = mstar_plaw
         return
 
     def mbh_from_host(self, pop, scatter):
@@ -992,10 +1009,10 @@ class MSigma_Standard(_MSigma_Relation):
 
         """
         scatter_dex = self._scatter_dex if scatter else None
-        mbh = _log10_relation(vdisp, self._mamp, self._sigma_plaw, scatter_dex, x0=self._sigma_ref)
+        mbh = _log10_relation(vdisp, self._mamp, self._mplaw, scatter_dex, x0=self._sigma_ref)
         return mbh
 
-    def vdisp_from_mbh(self, mbh, scatter):
+    def vdisp_from_mbh(self, mbh, redz, scatter):
         """Convert from black-hole mass to host galaxy stellar velocity dispersion.
 
         Parameters
@@ -1013,13 +1030,87 @@ class MSigma_Standard(_MSigma_Relation):
 
         """
         scatter_dex = self._scatter_dex if scatter else None
-        vdisp = _log10_relation_reverse(mbh, self._mamp, self._sigma_plaw, scatter_dex, x0=self._sigma_ref)
+        vdisp = _log10_relation_reverse(mbh, self._mamp, self._mplaw, scatter_dex, x0=self._sigma_ref)
         return vdisp
 
-    # def dmbh_dsigma(self, sigma):
-    #     # Is this needed? I don't know
-    #     return None
+    def dsigma_dmbh(self, vdisp, redz):
+        """Calculate the partial derivative of velocity dispersion versus BH mass :math:`d sigma / d M_bh`.
 
+        .. math::
+            [d sigma / d M_bh] = [sigma / (plaw * M_bh)]
+
+        Parameters
+        ----------
+        vdisp : array_like,
+            Host-galaxy velocity dispersion.  [cm/s].
+
+        Returns
+        -------
+        deriv : array_like, []
+            Jacobian term: partial derivative of velocity dispersion w.r.t. black-hole mass.
+            This quantity is unitless.
+
+        """
+        plaw = self._mplaw
+        mbh = self.mbh_from_vdisp(vdisp, scatter=False)
+        deriv = vdisp / (plaw * mbh)
+        return deriv
+
+    def mstar_from_vdisp(self, vdisp, redz=None, **kwargs): # Zahid et. al 2016 broken power law
+
+        M_break = np.power(10,10.26)*MSOL # break point stellar mass [log10(M/Msol)]
+        sigma_break = np.power(10,2.073)*KMPERSEC # break point velocity dispersion [log10(sigma/km s^-1)]
+        a_1 = 0.403 # power law index above break point
+        a_2 = 0.293 # power law index below break point
+        
+        #alpha = np.where(vdisp <= sigma_break, a_1,a_2)
+
+        alpha = a_2
+        
+        mstar = M_break*(vdisp/sigma_break)**(1/alpha)  # Zahid et. al 2016 equation 5 and first row of table 1
+        
+        return mstar
+
+    def vdisp_from_mstar(self, mstar, redz=None, **kwargs): # Zahid et. al 2016 broken power law
+        
+        M_break = np.power(10,10.26)*MSOL # break point stellar mass [log10(M/Msol)]
+        sigma_break = np.power(10,2.073)*KMPERSEC # break point velocity dispersion [log10(sigma/km s^-1)]
+        
+        a_1 = 0.403 # power law index above break point
+        a_2 = 0.293 # power law index below break point
+        
+        #alpha = np.where(mstar <= M_break, a_1,a_2)
+
+        alpha  = a_2
+        
+        vdisp = sigma_break*(mstar/M_break)**alpha # Zahid et. al 2016 equation 5 and first row of table 1
+        
+        return vdisp
+
+    def mstar_from_mbh(self, mbh, redz=None, scatter=None, **kwargs):
+        vdisp = self.vdisp_from_mbh(mbh, redz=redz, scatter=scatter)
+        mstar = self.mstar_from_vdisp(vdisp, redz=redz, **kwargs)
+        return mstar
+        
+    def dmstar_dsigma(self, vdisp, redz=None, **bfkwargs):
+        M_break = np.power(10,10.26)*MSOL # break point stellar mass [log10(M/Msol)]
+        sigma_break = np.power(10,2.073)*KMPERSEC # break point velocity dispersion [log10(sigma/km s^-1)]
+        a_1 = 0.403 # power law index above break point
+        a_2 = 0.293 # power law index below break point
+        
+        #alpha = np.where(vdisp <= sigma_break, a_1,a_2)
+
+        alpha = a_2
+        
+        dmstar_dsigma = M_break/(alpha*vdisp)*(vdisp/sigma_break)**(1/alpha)
+        return dmstar_dsigma
+    
+    def dmstar_dmbh(self, mstar, redz=None, **bfkwargs):
+        vdisp = self.vdisp_from_mstar(mstar, redz=redz)
+        dmstar_dsigma = self.dmstar_dsigma(vdisp, redz=redz, **bfkwargs)
+        dsigma_dmbh = self.dsigma_dmbh(vdisp, redz=redz)
+        dmstar_dmbh = dmstar_dsigma * dsigma_dmbh
+        return dmstar_dmbh
 
 class MSigma_MM2013(MSigma_Standard):
     """Mbh-Sigma Relation from McConnell & Ma 2013.
@@ -1044,6 +1135,16 @@ class MSigma_KH2013(MSigma_Standard):
     MASS_PLAW = 4.26                  # 4.26 ± 0.44
     SCATTER_DEX = 0.30
 
+class MSigma_DN2019(MSigma_Standard):
+    """Mbh-Sigma Relation from deNicola et. al 2019.
+
+    [DN2019]_ Eq. 3, with values taken from first row of Table 2 ("Variable sigma_e", "Subgroup All").
+    """
+
+    MASS_AMP = MSOL * 10.0 ** 8.30    # 8.30 ± 0.05   in units of [Msol]
+    SIGMA_REF = KMPERSEC * 10**2.291      # 195.4 km/s
+    MASS_PLAW = 5.07                  # 5.07 ± 0.27
+    SCATTER_DEX = 0.42                # 0.42 ± 0.04
 
 def get_msigma_relation(msigma: Union[_MSigma_Relation, Type[_MSigma_Relation]] = None) -> _MSigma_Relation:
     """Return a valid M-sigma (BH Mass vs. host galaxy velocity dispersion) instance.
