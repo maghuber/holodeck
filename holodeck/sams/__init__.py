@@ -17,6 +17,7 @@ from . import components                            # noqa
 from .sam import Semi_Analytic_Model           # noqa
 from .components import (                           # noqa
     GSMF_Schechter, GSMF_Double_Schechter,
+    VDF_Modified_Schechter,
     GPF_Power_Law,
     GMT_Power_Law,
     GMR_Illustris,
